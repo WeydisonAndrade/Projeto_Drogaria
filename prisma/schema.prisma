@@ -12,6 +12,328 @@ model User {
   email     String   @unique
   password  String
   name      String
+  role      UserRole @default(USER)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  conversations         Conversation[]
+  validatedPrescriptions Prescription[] @relation("PrescriptionValidator")
+  orders                Order[]
+}
+
+model Customer {
+  id        String   @id @default(cuid())
+  name      String
+  whatsapp  String   @unique
+  document  String?  // CPF/CNPJ
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  orders        Order[]
+  conversations Conversation[]
+  prescriptions Prescription[]
+}
+
+// Catálogo de produtos + integração com Trier + estoque
+model Product {
+  id               String   @id @default(cuid())
+  name             String
+  activeIngredient String?
+  category         String?
+  description      String?
+  imageUrl         String?
+  price            Decimal
+  cost             Decimal?
+  margin           Decimal?
+  stock            Int       @default(0)
+  reservedStock    Int       @default(0)
+  codigoTrier      String   @unique
+  controlled       Boolean  @default(false)
+  isActive         Boolean  @default(true)
+  erpExternalId    String?  // id no ERP Trier
+  lastSyncedAt     DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  orderItems            OrderItem[]
+  substitutionsAsSource ProductSubstitution[] @relation("ProductAsSource")
+  substitutionsAsTarget ProductSubstitution[] @relation("ProductAsTarget")
+
+  @@index([name])
+  @@index([activeIngredient])
+  @@index([category])
+}
+
+// Relações de substituição de produto (ex: genérico/similar)
+model ProductSubstitution {
+  id                 String   @id @default(cuid())
+  originalProductId  String
+  substituteProductId String
+  reason             String?
+  createdAt          DateTime @default(now())
+
+  originalProduct    Product @relation("ProductAsSource", fields: [originalProductId], references: [id])
+  substituteProduct  Product @relation("ProductAsTarget", fields: [substituteProductId], references: [id])
+
+  @@unique([originalProductId, substituteProductId])
+}
+
+model Order {
+  id          String      @id @default(cuid())
+  customerId  String?
+  customer    Customer?   @relation(fields: [customerId], references: [id])
+
+  status      OrderStatus @default(PENDING)
+  subtotal    Decimal
+  discount    Decimal     @default(0)
+  total       Decimal
+  paymentLink String?
+
+  erpOrderId    String?        // id do pedido no ERP Trier
+  erpSyncStatus ErpSyncStatus  @default(PENDING)
+  erpLastSyncAt DateTime?
+
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  items        OrderItem[]
+  payments     Payment[]
+  couponUsages CouponUsage[]
+
+  @@index([customerId, createdAt])
+  @@index([status, createdAt])
+}
+
+model OrderItem {
+  id        String   @id @default(cuid())
+  orderId   String
+  productId String
+
+  quantity  Int
+  unitPrice Decimal
+  margin    Decimal?
+
+  order     Order   @relation(fields: [orderId], references: [id])
+  product   Product @relation(fields: [productId], references: [id])
+
+  @@index([orderId])
+  @@index([productId])
+}
+
+// Conversas de canais (principalmente WhatsApp)
+model Conversation {
+  id              String             @id @default(cuid())
+  customerId      String?
+  customer        Customer?          @relation(fields: [customerId], references: [id])
+
+  channel         ConversationChannel
+  status          ConversationStatus @default(OPEN)
+  externalId      String?            @unique // ID no WhatsApp/Kommo/etc
+
+  assignedUserId  String?
+  assignedUser    User?              @relation(fields: [assignedUserId], references: [id])
+
+  lastMessageAt   DateTime?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  messages        Message[]
+
+  @@index([customerId, createdAt])
+  @@index([status, createdAt])
+}
+
+// Histórico de mensagens (alto volume)
+model Message {
+  id             String        @id @default(cuid())
+  conversationId String
+  conversation   Conversation  @relation(fields: [conversationId], references: [id])
+
+  sender         MessageSender
+  messageType    MessageType
+  text           String?
+  audioUrl       String?
+  imageUrl       String?
+  rawPayload     Json?
+
+  createdAt      DateTime      @default(now())
+
+  @@index([conversationId, createdAt])
+  @@index([createdAt])
+}
+
+// Cupons de desconto
+model Coupon {
+  id            String        @id @default(cuid())
+  code          String        @unique
+  discountType  DiscountType
+  discountValue Decimal
+  validUntil    DateTime?
+  maxUses       Int?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  isActive      Boolean       @default(true)
+
+  usages        CouponUsage[]
+
+  @@index([code])
+  @@index([validUntil])
+}
+
+// Uso de cupons em pedidos
+model CouponUsage {
+  id         String   @id @default(cuid())
+  couponId   String
+  customerId String?
+  orderId    String?
+
+  usedAt     DateTime @default(now())
+
+  coupon     Coupon    @relation(fields: [couponId], references: [id])
+  customer   Customer? @relation(fields: [customerId], references: [id])
+  order      Order?    @relation(fields: [orderId], references: [id])
+
+  @@index([couponId, usedAt])
+  @@index([customerId, usedAt])
+  @@index([orderId])
+}
+
+// Upload e validação de receitas médicas
+model Prescription {
+  id           String             @id @default(cuid())
+  customerId   String
+  customer     Customer           @relation(fields: [customerId], references: [id])
+
+  imageUrl     String
+  status       PrescriptionStatus @default(PENDING)
+
+  validatedById String?
+  validatedBy   User?             @relation("PrescriptionValidator", fields: [validatedById], references: [id])
+
+  notes        String?
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  @@index([customerId, createdAt])
+  @@index([status, createdAt])
+}
+
+// Controle de pagamentos
+model Payment {
+  id             String        @id @default(cuid())
+  orderId        String
+  order          Order         @relation(fields: [orderId], references: [id])
+
+  status         PaymentStatus @default(PENDING)
+  paymentGateway String
+  transactionId  String?
+  amount         Decimal
+  paidAt         DateTime?
+
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  @@index([orderId])
+  @@index([status, createdAt])
+}
+
+// Controle de movimentações de estoque (para histórico)
+model StockMovement {
+  id          String   @id @default(cuid())
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id])
+
+  quantity    Int
+  reason      String?
+  source      StockMovementSource
+  createdAt   DateTime @default(now())
+
+  orderId     String?
+  order       Order?   @relation(fields: [orderId], references: [id])
+
+  @@index([productId, createdAt])
+}
+
+// ========== ENUMS ==========
+
+enum UserRole {
+  ADMIN
+  MANAGER
+  PHARMACIST
+  OPERATOR
+  USER
+}
+
+enum OrderStatus {
+  PENDING
+  SEPARRATION
+  PAID
+  CANCELED
+}
+
+enum ErpSyncStatus {
+  PENDING
+  SYNCED
+  FAILED
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+enum MessageType {
+  TEXT
+  AUDIO
+  IMAGE
+  DOCUMENT
+  OTHER
+}
+
+enum MessageSender {
+  CUSTOMER
+  USER
+  SYSTEM
+  BOT
+}
+
+enum PrescriptionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum DiscountType {
+  PERCENTAGE
+  FIXED
+}
+
+enum ConversationChannel {
+  WHATSAPP
+  INSTAGRAM
+  WEBCHAT
+  OTHER
+}
+
+enum ConversationStatus {
+  OPEN
+  PENDING
+  CLOSED
+}
+
+enum StockMovementSource {
+  MANUAL
+  ORDER
+  ERP_SYNC
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  name      String
   role      String   @default("USER")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
