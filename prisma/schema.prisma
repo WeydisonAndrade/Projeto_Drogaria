@@ -1,0 +1,165 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  name      String
+  role      String   @default("USER")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  conversations Conversation[]
+  orders        Order[]
+}
+
+model Customer {
+  id             String   @id @default(cuid())
+  name           String
+  whatsapp       String   @unique
+  document       String?  // CPF/CNPJ
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  orders        Order[]
+  conversations Conversation[]
+}
+
+model Product {
+  id             String   @id @default(cuid())
+  name           String
+  description    String?
+  imageUrl       String?
+  price          Decimal
+  codigoTrier    String   @unique
+  activeIngredient String?
+  category       String?
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  orderItems OrderItem[]
+}
+
+model Order {
+  id           String      @id @default(cuid())
+  status       OrderStatus @default(PENDING)
+  total        Decimal
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  userId      String?
+  user        User?        @relation(fields: [userId], references: [id])
+
+  customerId  String?
+  customer    Customer?    @relation(fields: [customerId], references: [id])
+
+  items       OrderItem[]
+  payments    Payment[]
+  coupons     Coupon[]     @relation("OrderCoupons", references: [id])
+}
+
+model OrderItem {
+  id        String   @id @default(cuid())
+  quantity  Int
+  unitPrice Decimal
+
+  orderId   String
+  order     Order   @relation(fields: [orderId], references: [id])
+
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+}
+
+model Conversation {
+  id              String       @id @default(cuid())
+  externalId      String       @unique // ID no WhatsApp/Kommo
+  channel         String
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  customerId      String?
+  customer        Customer?    @relation(fields: [customerId], references: [id])
+
+  userId          String?
+  user            User?        @relation(fields: [userId], references: [id])
+
+  messages        Message[]
+}
+
+model Message {
+  id             String        @id @default(cuid())
+  direction      MessageDirection
+  type           String        // text, image, audio, etc
+  content        String?
+  rawPayload     Json?
+  createdAt      DateTime      @default(now())
+
+  conversationId String
+  conversation   Conversation  @relation(fields: [conversationId], references: [id])
+}
+
+model Coupon {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  description String?
+  discountPct Int?
+  discountVal Decimal?
+  validFrom   DateTime?
+  validTo     DateTime?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  orders      Order[]  @relation("OrderCoupons")
+}
+
+model Prescription {
+  id             String   @id @default(cuid())
+  customerId     String?
+  customer       Customer? @relation(fields: [customerId], references: [id])
+  imageUrl       String
+  status         String   @default("PENDING") // futura enum
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model Payment {
+  id             String        @id @default(cuid())
+  orderId        String
+  order          Order         @relation(fields: [orderId], references: [id])
+  provider       String        // gateway usado
+  externalId     String?       // id no gateway
+  amount         Decimal
+  status         PaymentStatus @default(PENDING)
+  method         String        // pix, cartão, etc
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+}
+
+enum OrderStatus {
+  PENDING
+  SEPARATION
+  PAID
+  CANCELED
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
